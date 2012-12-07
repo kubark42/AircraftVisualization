@@ -82,6 +82,8 @@
 #include <fcntl.h>
 #include <netinet/in.h>
 
+#include "visualTrail.h"
+
 using namespace osgEarth::Util;
 using namespace osgEarth::Util::Controls;
 using namespace osgEarth::Symbology;
@@ -103,7 +105,7 @@ double homeAlt=0;
 double initialAlt=200;
 double modelScale=0.001e0;
 double initialNED[3]={0,0,0};
-osg::Vec3d fpvCameraOffset(0.0, 0.0, 0.1); //This is the distance from the center of the UAV to the camera lens, in XYZ (a.k.a ENU) body reference frame
+osg::Vec3d fpvCameraOffset(0.00, 0.05, 0.0); //This is the distance from the center of the UAV to the camera lens, in XYZ (a.k.a ENU) body reference frame
 string earthFile="osgearth_models/boston.earth";
 string worldFile="";
 string modelFile="airframe_models/joe_cnc/J14-QT_X.3DS";
@@ -146,7 +148,7 @@ struct SnapImage : public osg::Camera::DrawCallback
 {
     SnapImage(const std::string& filename):
 	_filename(filename),
-	_snapImage(false)
+	_snapImage(true)
     {
         _image = new osg::Image;        
     }
@@ -156,24 +158,24 @@ struct SnapImage : public osg::Camera::DrawCallback
 		
         if (!_snapImage) return;
 		
-        osg::notify(osg::NOTICE)<<"Camera callback"<<std::endl;
+//        osg::notify(osg::NOTICE)<<"Camera callback"<<std::endl;
 		
         osg::Camera* camera = renderInfo.getCurrentCamera();
         osg::Viewport* viewport = camera ? camera->getViewport() : 0;
 		
-        osg::notify(osg::NOTICE)<<"Camera callback "<<camera<<" "<<viewport<<std::endl;
+//        osg::notify(osg::NOTICE)<<"Camera callback "<<camera<<" "<<viewport<<std::endl;
 		
         if (viewport && _image.valid())
         {
             _image->readPixels(int(viewport->x()),int(viewport->y()),int(viewport->width()),int(viewport->height()),
-                               GL_RGBA,
+                               GL_RGB, /*GL_LUMINANCE, GL_RGBA*/
                                GL_UNSIGNED_BYTE);
             osgDB::writeImageFile(*_image, _filename);
             
-            osg::notify(osg::NOTICE)<<"Taken screenshot, and written to '"<<_filename<<"'"<<std::endl;             
+//            osg::notify(osg::NOTICE)<<"Taken screenshot, and written to '"<<_filename<<"'"<<std::endl;             
         }
 		
-        _snapImage = false;
+//        _snapImage = false;
     }
 	
     std::string                         _filename;
@@ -198,8 +200,8 @@ struct SnapeImageHandler : public osgGA::GUIEventHandler
             {
                 if (ea.getKey() == _key)
                 {
-                    osg::notify(osg::NOTICE)<<"event handler"<<std::endl;
-                    _snapImage->_snapImage = true;
+                    _snapImage->_snapImage ^= true;
+                    osg::notify(osg::NOTICE)<<"Saving image (true/false): "<< _snapImage->_snapImage << std::endl;
                     return true;
                 }
 				
@@ -234,8 +236,8 @@ void singleWindow(osgViewer::CompositeViewer *viewer, osg::Node *root)
     unsigned int width, height;
     wsi->getScreenResolution(osg::GraphicsContext::ScreenIdentifier(0), width, height);
 
-    width *= 0.9;
-    height *= 0.9;
+    width = 1000;
+    height = 1000;
 
     osg::ref_ptr<osg::GraphicsContext::Traits> traits = new osg::GraphicsContext::Traits;
     traits->x = 0;
@@ -284,7 +286,7 @@ void singleWindow(osgViewer::CompositeViewer *viewer, osg::Node *root)
         view->setName("Camera view");
         osg::ref_ptr<osg::Camera> cam = view->getCamera();
         cam->setGraphicsContext(gc.get());
-        cam->setViewport(0, 0, width/3, height/3);
+        cam->setViewport(0, 0, 240*2, 240*2);
 
         viewer->addView(view);
 
@@ -464,8 +466,8 @@ struct global_struct * initialize()
 
             //Rotate world into local coordinates
             osg::Matrixd Rot(osg::Matrixd::identity());
-            Rot.preMultRotate(osg::Quat(osg::DegreesToRadians(90.0),osg::Vec3d(0.0, 1.0, 0.0)));
-            Rot.preMultRotate(osg::Quat(osg::DegreesToRadians(90.0),osg::Vec3d(0.0, 0.0, 1.0)));
+            Rot.preMultRotate(osg::Quat(osg::DegreesToRadians(-90.0),osg::Vec3d(0.0, 0.0, 1.0)));
+            Rot.postMultRotate(osg::Quat(osg::DegreesToRadians(90.0),osg::Vec3d(0.0, 1.0, 0.0)));
             pat->setAttitude(osg::Quat(Rot.getRotate()));
 			
             root->addChild(pat);
@@ -477,13 +479,23 @@ struct global_struct * initialize()
         g->pat->setPosition(osg::Vec3d(initialNED[1], initialNED[0], -initialNED[2]));
     }
 
+	// Declare and add to scene
+	visualTrail* cameraTrail = new visualTrail(5.);
+	std::cout << "4" << std::endl;
+	root->addChild(cameraTrail);
+	std::cout << "5" << std::endl;
+	
+	// In simulation loop, at selected time interval, add a point...
+//	cameraTrail->addPoint( osg::Matrix::inverse(osg::Matrixd(g->viewer->getView(1)->getCamera()->getViewMatrix())));
 
     osgUtil::Optimizer optimizer;
     optimizer.optimize(root);
 
+	//Camera 0 is the world camera
     g->viewer->getView(0)->addEventHandler(new osgViewer::StatsHandler);
     g->viewer->getView(0)->addEventHandler(new osgViewer::ThreadingHandler);
-    
+
+    //Camera 1 is the FPV camera
     //Set FOV. Do this by first getting the current camera settings, and then changing only the FOV
     double fovy, aspectRatio, zNear, zFar; 
     double desiredFOV=150;
@@ -496,6 +508,7 @@ struct global_struct * initialize()
     //Set background color to white
     g->viewer->getView(1)->getCamera()->setClearColor(osg::Vec4(1.0, 1.0, 1.0, 1.0));
 
+	std::cout << "6" << std::endl;
     return g;
 }
 
@@ -617,17 +630,30 @@ int main(int argc, char * const argv[])
 			}
 		}
 	}
-
+	
     // Start visualization in a new thread
     struct global_struct *g = initialize();
 
+	// Set frame rate
+	if(1){
+		g->viewer->setRunMaxFrameRate(5); 
+	}
+	else{
+		g->viewer->setRunFrameScheme(osgViewer::ViewerBase::ON_DEMAND);
+	}
+	
+	SnapImage* postDrawCallback = new SnapImage("/Volumes/OSG/opticalflow.tiff");
+	g->viewer->getView(1)->getCamera()->setPostDrawCallback(postDrawCallback);
+	g->viewer->getView(1)->addEventHandler(new SnapeImageHandler('p',postDrawCallback));
+	
     //! Start a thread to get the network information
-    startRunThread(g);
+//    startRunThread(g);
 
     //! Run the visualization
+	std::cout << "7" << std::endl;
     g->viewer->run();
 
-    //! Free the memory from the visualizatin
+    //! Free the memory from the visualization
     shutdown(g);
 
     return 0;
